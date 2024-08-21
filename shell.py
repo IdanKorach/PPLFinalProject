@@ -1,10 +1,26 @@
 import oti
+import sys
 
-while True:
-    text = input('oti > ')
-    result, error = oti.run('<stdin>', text) # stdin for the fn as placeholder 
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python shell.py <filename>")
+        return
 
-    if error: 
+    filename = sys.argv[1]
+    
+    try:
+        with open(filename, 'r') as file:
+            text = file.read()
+    except FileNotFoundError:
+        print(f"Error: File '{filename}' not found")
+        return
+    
+    result, error = oti.run(filename, text)
+
+    if error:
         print(error.as_string())
-    else: 
+    else:
         print(result)
+
+if __name__ == "__main__":
+    main()

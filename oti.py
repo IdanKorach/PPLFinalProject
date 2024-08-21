@@ -28,15 +28,15 @@ class Error:
 
 class IllegalCharError(Error):
     def __init__(self, pos_start, pos_end, details):
-        super().__init__(pos_start, pos_end, 'Illegal character', details)
+        super().__init__(pos_start, pos_end, 'Illegal character\n', details)
 
 class InvalidSyntaxError(Error):
     def __init__(self, pos_start, pos_end, details):
-        super().__init__(pos_start, pos_end, 'Illegal syntax', details)
+        super().__init__(pos_start, pos_end, 'Illegal syntax\n', details)
 
 class RTError(Error):
     def __init__(self, pos_start, pos_end, details, context):
-        super().__init__(pos_start, pos_end, 'Runtime Error', details)
+        super().__init__(pos_start, pos_end, 'Runtime Error\n', details)
         self.context = context
     
     def as_string(self):
@@ -109,6 +109,11 @@ TT_GT       = 'GTHEN'
 TT_LT       = 'LTHEN'
 TT_GTE      = 'GTEQUAL'
 TT_LTE      = 'LTEQUAL'
+TT_VAR      = 'VAR'
+TT_SNGLQTE  = 'SNGLQUOTE'
+TT_DBLQTE   = 'DBLQUOTE'
+
+SAVED_WORDS = ['Min', 'Max']
 
 class Token:
     def __init__(self, type_, value=None, pos_start=0, pos_end=0):
@@ -155,47 +160,62 @@ class Lexer:
         tokens = []
 
         while self.current_char != None:
+
             if self.current_char in ' \t':
                 self.advance()
+
             elif self.current_char in DIGITS:
                 tokens.append(self.make_number())
-            # 
+
             elif self.current_char == '+':
                 tokens.append(Token(TT_PLUS, pos_start=self.pos))
                 self.advance()
+
             elif self.current_char == '-':
                 tokens.append(Token(TT_MINUS, pos_start=self.pos))
                 self.advance()
+
             elif self.current_char == '*':
                 tokens.append(Token(TT_MUL, pos_start=self.pos ))
                 self.advance()
+
             elif self.current_char == '/':
                 tokens.append(Token(TT_DIV, pos_start=self.pos))
                 self.advance()
+
             elif self.current_char == '(':
                 tokens.append(Token(TT_LPAREN, pos_start=self.pos))
                 self.advance()
+
             elif self.current_char == ')':
                 tokens.append(Token(TT_RPAREN, pos_start=self.pos))  
                 self.advance()  
+
             elif self.current_char == '^':
                 tokens.append(Token(TT_POWER, pos_start=self.pos))
                 self.advance()
+
             elif self.current_char == ',':
                 tokens.append(Token(TT_COMMA, pos_start=self.pos))
                 self.advance()
+
             elif self.current_char == 'M' and self.peek() == 'i':
                 if self.peek(2) == 'n':
                     tokens.append(Token(TT_MIN, pos_start=self.pos))
                     self.advance(3)  # Advance 3 times to skip 'Min'
                 else:
                     self.advance()
+
             elif self.current_char == 'M' and self.peek() == 'a':
                 if self.peek(2) == 'x':
                     tokens.append(Token(TT_MAX, pos_start=self.pos))
                     self.advance(3)  # Advance 3 times to skip 'Min'
                 else:
                     self.advance()
+
+            elif self.current_char in CHARS:    
+                tokens.append(self.make_variable())
+
             elif self.current_char == '=': 
                 if self.peek() == '=':
                     tokens.append(Token(TT_EQUAL, pos_start=self.pos))
@@ -203,6 +223,7 @@ class Lexer:
                 else:
                     tokens.append(Token(TT_ASSIGN, pos_start=self.pos))
                     self.advance()
+
             elif self.current_char == '!': 
                 if self.peek() == '=':
                     tokens.append(Token(TT_NEQUAL, pos_start=self.pos))
@@ -210,6 +231,7 @@ class Lexer:
                 else:
                     tokens.append(Token(TT_NOT, pos_start=self.pos))
                     self.advance()
+
             elif self.current_char == '>':
                 if self.peek() == '=':
                     tokens.append(Token(TT_GTE, pos_start=self.pos))
@@ -217,6 +239,7 @@ class Lexer:
                 else:
                     tokens.append(Token(TT_GT, pos_start=self.pos))
                     self.advance()
+
             elif self.current_char == '<':
                 if self.peek() == '=':
                     tokens.append(Token(TT_LTE, pos_start=self.pos))
@@ -224,12 +247,22 @@ class Lexer:
                 else:
                     tokens.append(Token(TT_LT, pos_start=self.pos))
                     self.advance()
+
             elif self.current_char == '&':
                 tokens.append(Token(TT_AND, pos_start=self.pos))
                 self.advance()
+
             elif self.current_char == '|' and self.peek() == '|':
                 tokens.append(Token(TT_OR, pos_start=self.pos))
                 self.advance(2)
+
+            elif self.current_char == "'":
+                tokens.append(Token(TT_SNGLQTE, pos_start=self.pos))
+                self.advance()
+
+            elif self.current_char == '"':
+                tokens.append(Token(TT_DBLQTE, pos_start=self.pos))
+                self.advance()
 
             else:
                 pos_start = self.pos.copy()
@@ -259,7 +292,17 @@ class Lexer:
             return Token(TT_INT, int(num_str), pos_start, self.pos)
         else:
             return Token(TT_FLOAT, float(num_str), pos_start, self.pos) 
+        
+    def make_variable(self):
+        var_str = ''
+        pos_start = self.pos.copy()
 
+        while self.current_char != None and self.current_char != ' ':
+            var_str += self.current_char
+            self.advance()
+
+        return Token(TT_VAR, var_str, pos_start, self.pos)
+        
 #################################
 # NODES
 #################################
@@ -353,6 +396,26 @@ class CompOpNode:
 
     def __repr__(self):
         return f'({self.left_node} {self.op_tok} {self.right_node})'
+    
+class StatementsNode:
+    def __init__(self, statements):
+        self.statements = statements
+        self.pos_start = statements[0].pos_start if len(statements) > 0 else None
+        self.pos_end = statements[-1].pos_end if len(statements) > 0 else None
+
+    def __repr__(self):
+        return f"{self.statements}"
+    
+class VariableNode:
+    def __init__(self, var_name, value):
+        self.var_name = var_name
+        self.value = value
+    
+        self.pos_start = self.var_name.pos_start
+        self.pos_end = self.value.pos_end
+    
+    def __repr__(self):
+        return f'({self.var_name} = {self.value})'
 
 #################################
 # PARSER RESULT
@@ -387,7 +450,7 @@ class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
         self.tok_idx = -1
-        self.advance()      
+        self.advance()
 
     def advance(self):
         self.tok_idx += 1
@@ -396,13 +459,26 @@ class Parser:
         return self.current_tok
 
     def parse(self):
-        res = self.expr()
+        res = self.statements()
         if not res.error and self.current_tok.type != TT_EOF:
             return res.failure(InvalidSyntaxError(
                 self.current_tok.pos_start, self.current_tok.pos_end,
                 "Expected '+', '-', '*', '/' or comparison operator"
             ))
         return res
+
+    def statements(self):
+        res = ParseResult()
+        statements = []
+
+        while self.current_tok.type != TT_EOF:
+            stmt = res.register(self.expr())
+            if res.error:
+                return res
+            statements.append(stmt)
+            self.advance()  # Move to the next token after each statement
+        
+        return res.success(StatementsNode(statements))
 
     def factor(self):
         res = ParseResult()
@@ -476,6 +552,22 @@ class Parser:
                 MinNode(left_expr, right_expr)) if tok.type == TT_MIN else res.success(
                     MaxNode(left_expr, right_expr))
         
+        elif tok.type in (TT_VAR):
+            var_name = self.current_tok
+            res.register(self.advance())
+            if self.current_tok.type != TT_ASSIGN:
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    f"Expected '=' after variable name"
+                ))
+            
+            res.register(self.advance())
+            expr_value = res.register(self.expr())  # Parse the value as an expression
+            if res.error:
+                return res
+            
+            return res.success(VariableNode(var_name, expr_value))
+
         return res.failure(InvalidSyntaxError(
             tok.pos_start, tok.pos_end,
             "Expected int or float"
@@ -691,15 +783,45 @@ class LogicalOp:
     def __str__(self):
         return str(self.value)  # Convert back to int for display
     
+class Variable:
+    def __init__(self, value=None):
+        self.set_pos()
+        self.set_context()
+        self.value = value
+        self.variables = {}  # Dictionary to store variables by name
+
+    def set_pos(self, pos_start=None, pos_end=None):
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+        return self
+    
+    def set_context(self, context=None):
+        self.context = context
+        return self
+
+    def assign_to(self, name, other):
+        if isinstance(other, Number):
+            # Assign the value of 'other' to the var_name name
+            self.variables[name] = Number(other.value).set_context(self.context)
+            return self.variables[name], None
+        else:
+            # Handle other types or raise an error
+            return None, ValueError("Assignment only supports Numbers.")
+
+    def get_value(self, name):
+        # Retrieve the value of a var_name by name
+        return self.variables.get(name, None)
+    
 #################################
 # CONTEXT
 #################################
     
 class Context:
-	def __init__(self, display_name, parent=None, parent_entry_pos=None):
-		self.display_name = display_name
-		self.parent = parent
-		self.parent_entry_pos = parent_entry_pos
+    def __init__(self, display_name, parent=None, parent_entry_pos=None):
+        self.display_name = display_name
+        self.parent = parent
+        self.parent_entry_pos = parent_entry_pos
+        self.variables = {}  # Dictionary to store variables
 
 #################################
 # INTERPRETER
@@ -728,7 +850,8 @@ class Interpreter:
         if res.error:
             return res
 
-        result = None 
+        result = None  # do i need this?
+
         error = None  # Initialize error to None
 
         if node.op_tok.type == TT_PLUS:
@@ -816,9 +939,11 @@ class Interpreter:
     def visit_LogicalOpNode(self, node, context):
         res = RTResult()
         left = res.register(self.visit(node.left_node, context))
-        if res.error: return res
+        if res.error: 
+            return res
         right = res.register(self.visit(node.right_node, context))
-        if res.error: return res
+        if res.error: 
+            return res
 
         if node.op_tok.type == TT_AND:
             result, error = LogicalOp(left.value).and_with(LogicalOp(right.value))
@@ -870,6 +995,35 @@ class Interpreter:
                 node.pos_start, node.pos_end,
                 f"Operation failed unexpectedly with operator '{node.op_tok.type}'\n"
             ))
+        
+    def visit_StatementsNode(self, node, context):
+        res = RTResult()
+        for statement in node.statements:
+            value = res.register(self.visit(statement, context))
+            if res.error:
+                return res
+        return res.success(value)
+    
+    def visit_VariableNode(self, node, context):
+        res = RTResult()
+
+        # Get the variable name directly from the token
+        variable_name = node.var_name.value
+
+        # Visit the value node (the expression on the right side of the assignment)
+        value = res.register(self.visit(node.value, context))
+        if res.error:
+            return res
+
+        # Check if the variable exists in the context
+        if variable_name in context.variables:
+            # Update the existing variable
+            context.variables[variable_name].value = value
+        else:
+            # Create a new variable
+            context.variables[variable_name] = Variable(value).set_context(context).set_pos(node.pos_start, node.pos_end)
+
+        return res.success(value)
 
 #################################
 # RUN
