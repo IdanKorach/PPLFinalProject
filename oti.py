@@ -112,6 +112,7 @@ TT_LTE      = 'LTEQUAL'
 TT_VAR      = 'VAR'
 TT_SNGLQTE  = 'SNGLQUOTE'
 TT_DBLQTE   = 'DBLQUOTE'
+TT_NEWLINE  = 'NEWLINE'
 
 SAVED_WORDS = ['Min', 'Max']
 
@@ -264,6 +265,10 @@ class Lexer:
                 tokens.append(Token(TT_DBLQTE, pos_start=self.pos))
                 self.advance()
 
+            elif self.current_char == '\n':
+                tokens.append(Token(TT_NEWLINE, pos_start=self.pos))
+                self.advance()
+
             else:
                 pos_start = self.pos.copy()
                 char = self.current_char
@@ -407,12 +412,13 @@ class StatementsNode:
         return f"{self.statements}"
     
 class VariableNode:
-    def __init__(self, var_name, value):
+    def __init__(self, var_name, value=None):
         self.var_name = var_name
         self.value = value
     
         self.pos_start = self.var_name.pos_start
-        self.pos_end = self.value.pos_end
+        if value != None:
+            self.pos_end = self.value.pos_end
     
     def __repr__(self):
         return f'({self.var_name} = {self.value})'
@@ -472,13 +478,23 @@ class Parser:
         statements = []
 
         while self.current_tok.type != TT_EOF:
-            stmt = res.register(self.expr())
+            stmt = res.register(self.statement())
             if res.error:
                 return res
             statements.append(stmt)
-            self.advance()  # Move to the next token after each statement
-        
+
+            if self.current_tok.type == TT_NEWLINE:
+                res.register(self.advance())  # Advance past the newline
+            elif self.current_tok.type != TT_EOF:
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected 'NEWLINE'"
+                ))
+
         return res.success(StatementsNode(statements))
+
+    def statement(self):
+        return self.expr()
 
     def factor(self):
         res = ParseResult()
@@ -553,20 +569,19 @@ class Parser:
                     MaxNode(left_expr, right_expr))
         
         elif tok.type in (TT_VAR):
-            var_name = self.current_tok
+            var_name = tok
             res.register(self.advance())
-            if self.current_tok.type != TT_ASSIGN:
-                return res.failure(InvalidSyntaxError(
-                    self.current_tok.pos_start, self.current_tok.pos_end,
-                    f"Expected '=' after variable name"
-                ))
-            
-            res.register(self.advance())
-            expr_value = res.register(self.expr())  # Parse the value as an expression
-            if res.error:
-                return res
-            
-            return res.success(VariableNode(var_name, expr_value))
+
+            # Check if it's a variable assignment
+            if self.current_tok.type == TT_ASSIGN:
+                res.register(self.advance())
+                expr_value = res.register(self.expr())  # Parse the value as an expression
+                if res.error:
+                    return res
+                return res.success(VariableNode(var_name, expr_value))
+            # Otherwise, it's a variable usage
+            else:
+                return res.success(VariableNode(var_name, None))
 
         return res.failure(InvalidSyntaxError(
             tok.pos_start, tok.pos_end,
@@ -1010,20 +1025,23 @@ class Interpreter:
         # Get the variable name directly from the token
         variable_name = node.var_name.value
 
-        # Visit the value node (the expression on the right side of the assignment)
-        value = res.register(self.visit(node.value, context))
-        if res.error:
-            return res
-
-        # Check if the variable exists in the context
-        if variable_name in context.variables:
-            # Update the existing variable
-            context.variables[variable_name].value = value
+        if node.value:
+            # Variable assignment
+            value = res.register(self.visit(node.value, context))
+            if res.error:
+                return res
+            context.variables[variable_name] = value
+            return res.success(value)
         else:
-            # Create a new variable
-            context.variables[variable_name] = Variable(value).set_context(context).set_pos(node.pos_start, node.pos_end)
-
-        return res.success(value)
+            # Variable usage
+            if variable_name in context.variables:
+                return res.success(context.variables[variable_name])
+            else:
+                return res.failure(RTError(
+                    node.pos_start, node.pos_end,
+                    f"'{variable_name}' is not defined",
+                    context
+                ))
 
 #################################
 # RUN
