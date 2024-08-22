@@ -113,7 +113,7 @@ TT_VAR      = 'VAR'
 TT_SNGLQTE  = 'SNGLQUOTE'
 TT_DBLQTE   = 'DBLQUOTE'
 TT_NEWLINE  = 'NEWLINE'
-
+TT_STRING   = 'STR'
 
 SAVED_WORDS = ['Min', 'Max']
 
@@ -258,13 +258,19 @@ class Lexer:
                 tokens.append(Token(TT_OR, pos_start=self.pos))
                 self.advance(2)
 
-            elif self.current_char == "'":
-                tokens.append(Token(TT_SNGLQTE, pos_start=self.pos))
-                self.advance()
+            elif self.current_char == "'":  # need to add a way to check for errors
+                if self.peek() in CHARS:
+                    tokens.append(self.make_string())
+                else:
+                    tokens.append(Token(TT_SNGLQTE, pos_start=self.pos))
+                    self.advance()
 
             elif self.current_char == '"':
-                tokens.append(Token(TT_DBLQTE, pos_start=self.pos))
-                self.advance()
+                if self.peek() in CHARS:
+                    tokens.append(self.make_string())
+                else:
+                    tokens.append(Token(TT_DBLQTE, pos_start=self.pos))
+                    self.advance()
 
             elif self.current_char == '\n':
                 tokens.append(Token(TT_NEWLINE, pos_start=self.pos))
@@ -308,6 +314,19 @@ class Lexer:
             self.advance()
 
         return Token(TT_VAR, var_str, pos_start, self.pos)
+    
+    def make_string(self):
+        str = ''
+        pos_start = self.pos.copy()
+
+        self.advance() # Skip the first quote
+        while self.current_char != "'" and self.current_char != '"':
+            str += self.current_char
+            self.advance()
+
+        self.advance() # Skip the second quote
+        
+        return Token(TT_STRING, str, pos_start, self.pos)
         
 #################################
 # NODES
@@ -422,6 +441,16 @@ class VariableNode:
     
     def __repr__(self):
         return f'({self.var_name} = {self.value})'
+    
+class StringNode:
+    def __init__(self, tok):
+        self.tok = tok
+
+        self.pos_start = self.tok.pos_start
+        self.pos_end = self.tok.pos_end
+    
+    def __repr__(self):
+        return f'{self.tok}'
 
 #################################
 # PARSER RESULT
@@ -517,6 +546,10 @@ class Parser:
         elif tok.type in (TT_INT, TT_FLOAT):
             res.register(self.advance())
             return res.success(NumberNode(tok))
+        
+        elif tok.type in (TT_STRING):
+            res.register(self.advance())
+            return res.success(StringNode(tok))
         
         elif tok.type == TT_LPAREN:
             res.register(self.advance())
@@ -724,6 +757,29 @@ class Number:
             return str(self.value)
         return str(self.value)
     
+class Strings:
+    def __init__(self, value):
+        self.value = value
+        self.set_pos()
+        self.set_context()
+
+    def set_pos(self, pos_start=None, pos_end=None):
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+        return self
+    
+    def set_context(self, context=None):
+        self.context = context
+        return self
+    
+    def concat(self, other):
+        if isinstance(other, Strings):
+            return Strings(self.value + other.value).set_context(self.context)
+        return None
+    
+    def __repr__(self):
+        return self.value
+    
 class CompOp:
     def __init__(self, value):
         self.value = value
@@ -855,6 +911,9 @@ class Interpreter:
 
     def visit_NumberNode(self, node, context):
         return RTResult().success(Number(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end))
+    
+    def visit_StringNode(self, node, context):
+        return RTResult().success(Strings(node.tok.value).set_context(context).set_pos(node.pos_start, node.pos_end))
 
     def visit_BinOpNode(self, node, context):
         res = RTResult()
@@ -865,30 +924,35 @@ class Interpreter:
         if res.error:
             return res
 
-        result = None  # do i need this?
-
         error = None  # Initialize error to None
 
-        if node.op_tok.type == TT_PLUS:
-            result, error = left.added_to(right)
-        elif node.op_tok.type == TT_MINUS:
-            result, error = left.subbed_by(right)
-        elif node.op_tok.type == TT_MUL:
-            result, error = left.multed_by(right)
-        elif node.op_tok.type == TT_DIV:
-            result, error = left.dived_by(right)
-        elif node.op_tok.type == TT_POWER:
-            result, error = left.powed_by(right)
-        
+        # Handle numbers
+        if isinstance(left, Number) and isinstance(right, Number):
+            if node.op_tok.type == TT_PLUS:
+                result, error = left.added_to(right)
+            elif node.op_tok.type == TT_MINUS:
+                result, error = left.subbed_by(right)
+            elif node.op_tok.type == TT_MUL:
+                result, error = left.multed_by(right)
+            elif node.op_tok.type == TT_DIV:
+                result, error = left.dived_by(right)
+            elif node.op_tok.type == TT_POWER:
+                result, error = left.powed_by(right)
+
+        # Handle strings
+        elif isinstance(left, Strings) and isinstance(right, Strings):
+            if node.op_tok.type == TT_PLUS:  # Assuming + is used for string concatenation
+                result = left.concat(right)
+                if result is None:
+                    error = ValueError(f"Cannot concatenate {left} and {right}")
+            else:
+                error = ValueError(f"Unsupported operation for strings: {node.op_tok}")
+
         if error:
             return res.failure(error)
         elif result is not None:
             return res.success(result.set_pos(node.pos_start, node.pos_end))
-        else:
-            return res.failure(InvalidSyntaxError(
-                node.pos_start, node.pos_end,
-                f"Operation failed unexpectedly with operator '{node.op_tok.type}'\n"
-            ))
+
 
     def visit_UnaryOpNode(self, node, context):
         res = RTResult()
@@ -1013,14 +1077,21 @@ class Interpreter:
         
     def visit_StatementsNode(self, node, context):
         res = RTResult()
-        results = []        # Just for debugging
+        results = []  # Just for debugging
         for statement in node.statements:
             value = res.register(self.visit(statement, context))
             if res.error:
                 return res
+
+            # If the value is an instance of a custom class like Strings or Number, get its value
+            if isinstance(value, Strings):
+                value = value.value
+            elif isinstance(value, Number):
+                value = value.value
+            
             results.append(value)
         return res.success(results)
-    
+
     def visit_VariableNode(self, node, context):
         res = RTResult()
 
