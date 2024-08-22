@@ -412,13 +412,12 @@ class StatementsNode:
         return f"{self.statements}"
     
 class VariableNode:
-    def __init__(self, var_name, value=None):
+    def __init__(self, var_name, value):
         self.var_name = var_name
         self.value = value
     
         self.pos_start = self.var_name.pos_start
-        if value != None:
-            self.pos_end = self.value.pos_end
+        self.pos_end = self.var_name.pos_end if value is None else self.value.pos_end
     
     def __repr__(self):
         return f'({self.var_name} = {self.value})'
@@ -1013,11 +1012,13 @@ class Interpreter:
         
     def visit_StatementsNode(self, node, context):
         res = RTResult()
+        results = []        # Just for debugging
         for statement in node.statements:
             value = res.register(self.visit(statement, context))
             if res.error:
                 return res
-        return res.success(value)
+            results.append(value)
+        return res.success(results)
     
     def visit_VariableNode(self, node, context):
         res = RTResult()
@@ -1047,22 +1048,28 @@ class Interpreter:
 # RUN
 #################################
         
-def run(fn, text):
+def run(filename, text):
     # Generate tokens
-    lexer = Lexer(fn, text)
+    lexer = Lexer(filename, text)
     tokens, error = lexer.make_tokens()
-    if error: 
-        return None, error
-
+    if error: return None, error
+    
     # Generate AST
     parser = Parser(tokens)
     ast = parser.parse()
-    if ast.error: 
-        return None, ast.error
-    
+    if ast.error: return None, ast.error
+
     # Run program
     interpreter = Interpreter()
     context = Context('<program>')
     result = interpreter.visit(ast.node, context)
-
-    return result.value, result.error
+    
+    if result.error:
+        return None, result.error
+    
+    # Print the result of each statement for debugging
+    for statement_result in result.value:
+        if statement_result is not None:
+            print(statement_result)
+    
+    return result.value, None
