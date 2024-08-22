@@ -114,6 +114,7 @@ TT_SNGLQTE  = 'SNGLQUOTE'
 TT_DBLQTE   = 'DBLQUOTE'
 TT_NEWLINE  = 'NEWLINE'
 
+
 SAVED_WORDS = ['Min', 'Max']
 
 class Token:
@@ -1052,12 +1053,14 @@ def run(filename, text):
     # Generate tokens
     lexer = Lexer(filename, text)
     tokens, error = lexer.make_tokens()
-    if error: return None, error
+    if error: 
+        return None, error
     
     # Generate AST
     parser = Parser(tokens)
     ast = parser.parse()
-    if ast.error: return None, ast.error
+    if ast.error: 
+        return None, ast.error
 
     # Run program
     interpreter = Interpreter()
