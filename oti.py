@@ -30,6 +30,10 @@ class IllegalCharError(Error):
     def __init__(self, pos_start, pos_end, details):
         super().__init__(pos_start, pos_end, 'Illegal character\n', details)
 
+class ExpectedCharError(Error):
+    def __init__(self, pos_start, pos_end, details):
+        super().__init__(pos_start, pos_end, 'Expected character\n', details)
+
 class InvalidSyntaxError(Error):
     def __init__(self, pos_start, pos_end, details):
         super().__init__(pos_start, pos_end, 'Illegal syntax\n', details)
@@ -85,6 +89,10 @@ class Position:
 #################################
 # TOKENS
 #################################
+    
+SAVED_WORDS = {
+    'IF', 'ELSE', 'WHILE'
+}
 
 TT_INT      = 'INT'
 TT_FLOAT    = 'FLOAT'
@@ -114,8 +122,9 @@ TT_SNGLQTE  = 'SNGLQUOTE'
 TT_DBLQTE   = 'DBLQUOTE'
 TT_NEWLINE  = 'NEWLINE'
 TT_STRING   = 'STR'
-
-SAVED_WORDS = ['Min', 'Max']
+TT_IF       = 'IF'
+TT_ELSE     = 'ELSE'
+TT_WHILE    = 'WHILE'
 
 class Token:
     def __init__(self, type_, value=None, pos_start=0, pos_end=0):
@@ -203,16 +212,22 @@ class Lexer:
 
             elif self.current_char == 'M' and self.peek() == 'i':
                 if self.peek(2) == 'n':
-                    tokens.append(Token(TT_MIN, pos_start=self.pos))
-                    self.advance(3)  # Advance 3 times to skip 'Min'
-                else:
+                    if self.peek(3) == "(":
+                        tokens.append(Token(TT_MIN, pos_start=self.pos))
+                        self.advance(3)  # Advance 3 times to skip 'Min'
+                    else:
+                        return ExpectedCharError(pos_start, self.pos, f"Expected '(' ")
+                else:        
                     self.advance()
 
             elif self.current_char == 'M' and self.peek() == 'a':
                 if self.peek(2) == 'x':
-                    tokens.append(Token(TT_MAX, pos_start=self.pos))
-                    self.advance(3)  # Advance 3 times to skip 'Min'
-                else:
+                    if self.peek(3) == "(":
+                        tokens.append(Token(TT_MAX, pos_start=self.pos))
+                        self.advance(3)  # Advance 3 times to skip 'Max'
+                    else:
+                        return ExpectedCharError(pos_start, self.pos, f"Expected '(' ")
+                else:        
                     self.advance()
 
             elif self.current_char in CHARS:    
@@ -258,19 +273,11 @@ class Lexer:
                 tokens.append(Token(TT_OR, pos_start=self.pos))
                 self.advance(2)
 
-            elif self.current_char == "'":  # need to add a way to check for errors
-                if self.peek() in CHARS:
-                    tokens.append(self.make_string())
-                else:
-                    tokens.append(Token(TT_SNGLQTE, pos_start=self.pos))
-                    self.advance()
-
-            elif self.current_char == '"':
-                if self.peek() in CHARS:
-                    tokens.append(self.make_string())
-                else:
-                    tokens.append(Token(TT_DBLQTE, pos_start=self.pos))
-                    self.advance()
+            elif self.current_char in "\"'":
+                result, error = self.make_string()
+                if error:
+                    return [], error  # Return the error immediately
+                tokens.append(result)
 
             elif self.current_char == '\n':
                 tokens.append(Token(TT_NEWLINE, pos_start=self.pos))
@@ -314,19 +321,23 @@ class Lexer:
             self.advance()
 
         return Token(TT_VAR, var_str, pos_start, self.pos)
-    
-    def make_string(self):
-        str = ''
-        pos_start = self.pos.copy()
 
-        self.advance() # Skip the first quote
-        while self.current_char != "'" and self.current_char != '"':
-            str += self.current_char
+    def make_string(self):
+        str_val = ''
+        pos_start = self.pos.copy()
+        quote_type = self.current_char  # Save whether it's a single or double quote
+
+        self.advance()  # Skip the opening quote
+        while self.current_char is not None and self.current_char != quote_type:
+            str_val += self.current_char
             self.advance()
 
-        self.advance() # Skip the second quote
-        
-        return Token(TT_STRING, str, pos_start, self.pos)
+        # If we reached the end of the input without finding the closing quote
+        if self.current_char != quote_type:
+            return None, ExpectedCharError(pos_start, self.pos, f"Expected closing {quote_type} for string")
+
+        self.advance()  # Skip the closing quote
+        return Token(TT_STRING, str_val, pos_start, self.pos), None
         
 #################################
 # NODES
@@ -492,6 +503,12 @@ class Parser:
         if self.tok_idx < len(self.tokens):
             self.current_tok = self.tokens[self.tok_idx]
         return self.current_tok
+    
+    def peek(self, steps=1):
+        peek_idx = self.tok_idx + steps
+        if peek_idx >= len(self.tokens):
+            return None
+        return self.tokens[peek_idx]
 
     def parse(self):
         res = self.statements()
@@ -523,6 +540,20 @@ class Parser:
         return res.success(StatementsNode(statements))
 
     def statement(self):
+        res = ParseResult()
+
+        if self.current_tok.type == TT_VAR and self.peek().type == TT_ASSIGN:
+            # This is an assignment
+            return self.expr()
+
+        # Otherwise, check if it's an invalid standalone number or string
+        elif self.current_tok.type in (TT_INT, TT_FLOAT, TT_STRING):
+            return res.failure(InvalidSyntaxError(
+                self.current_tok.pos_start, self.current_tok.pos_end,
+                "Expected variable assignment, not standalone value"
+            ))
+
+        # Handle other types of statements or expressions
         return self.expr()
 
     def factor(self):
@@ -1124,6 +1155,7 @@ def run(filename, text):
     # Generate tokens
     lexer = Lexer(filename, text)
     tokens, error = lexer.make_tokens()
+    # print(tokens)
     if error: 
         return None, error
     
@@ -1131,7 +1163,7 @@ def run(filename, text):
     parser = Parser(tokens)
     ast = parser.parse()
     if ast.error: 
-        return None, ast.error
+        return (None, ast.error)
 
     # Run program
     interpreter = Interpreter()

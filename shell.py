@@ -16,6 +16,8 @@ def main():
         return
     
     result, error = oti.run(filename, text)
+    if error:
+        print(error.as_string())
 
 if __name__ == "__main__":
     main()
