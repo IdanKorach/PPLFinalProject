@@ -91,7 +91,7 @@ class Position:
 #################################
     
 SAVED_WORDS = {
-    'IF', 'ELSE', 'WHILE'
+    'IF', 'ELSE', 'WHILE', 'ELIF'
 }
 
 TT_INT      = 'INT'
@@ -118,13 +118,16 @@ TT_LT       = 'LTHEN'
 TT_GTE      = 'GTEQUAL'
 TT_LTE      = 'LTEQUAL'
 TT_VAR      = 'VAR'
+TT_KEYWORD  = 'KEYWORD'
 TT_SNGLQTE  = 'SNGLQUOTE'
 TT_DBLQTE   = 'DBLQUOTE'
 TT_NEWLINE  = 'NEWLINE'
 TT_STRING   = 'STR'
 TT_IF       = 'IF'
+TT_ELIF     = 'ELIF'
 TT_ELSE     = 'ELSE'
 TT_WHILE    = 'WHILE'
+TT_COLON    = 'COLON'
 
 class Token:
     def __init__(self, type_, value=None, pos_start=0, pos_end=0):
@@ -138,6 +141,9 @@ class Token:
 
         if pos_end:
             self.pos_end = pos_end
+
+    def matches(self, type, value):
+        return self.type == type and self.value == value
 
     def __repr__(self):
         if self.value: 
@@ -208,6 +214,10 @@ class Lexer:
 
             elif self.current_char == ',':
                 tokens.append(Token(TT_COMMA, pos_start=self.pos))
+                self.advance()
+
+            elif self.current_char == ':':
+                tokens.append(Token(TT_COLON, pos_start=self.pos))
                 self.advance()
 
             elif self.current_char == 'M' and self.peek() == 'i':
@@ -311,16 +321,20 @@ class Lexer:
             return Token(TT_INT, int(num_str), pos_start, self.pos)
         else:
             return Token(TT_FLOAT, float(num_str), pos_start, self.pos) 
-        
+            
     def make_variable(self):
         var_str = ''
         pos_start = self.pos.copy()
 
-        while self.current_char != None and self.current_char != ' ':
+        while self.current_char is not None and (self.current_char.isalnum() or self.current_char == '_'):
             var_str += self.current_char
             self.advance()
 
-        return Token(TT_VAR, var_str, pos_start, self.pos)
+        # Check if the variable name is a keyword
+        if var_str.upper() in SAVED_WORDS:
+            return Token(TT_KEYWORD, var_str, pos_start, self.pos)
+        else:
+            return Token(TT_VAR, var_str, pos_start, self.pos)
 
     def make_string(self):
         str_val = ''
@@ -462,6 +476,17 @@ class StringNode:
     
     def __repr__(self):
         return f'{self.tok}'
+    
+class IfNode:
+    def __init__(self, cases, else_case):
+        self.cases = cases
+        self.else_case = else_case
+
+        self.pos_start = self.cases[0][0].pos_start if self.cases and self.cases[0][0] else None
+        self.pos_end = (self.else_case.pos_end if self.else_case else self.cases[-1][-1].pos_end) if self.cases else None
+
+    def __repr__(self):
+        return f'IfNode({self.cases}, {self.else_case})'
 
 #################################
 # PARSER RESULT
@@ -477,7 +502,6 @@ class ParseResult:
             if res.error:
                 self.error = res.error
             return res.node
-
         return res
     
     def success(self, node):
@@ -542,19 +566,127 @@ class Parser:
     def statement(self):
         res = ParseResult()
 
-        if self.current_tok.type == TT_VAR and self.peek().type == TT_ASSIGN:
+        if self.current_tok.matches(TT_KEYWORD, 'IF'):
+            if_stmt = res.register(self.if_expr())
+            if res.error:
+                return res
+            return res.success(if_stmt)
+        
+        elif self.current_tok.matches(TT_KEYWORD, 'ELIF'):
+            elif_stmt = res.register(self.if_expr())  
+            if res.error:
+                return res
+            return res.success(elif_stmt)
+        
+        elif self.current_tok.matches(TT_KEYWORD, 'ELSE'):
+            else_stmt = res.register(self.if_expr())  
+            if res.error:
+                return res
+            return res.success(else_stmt)
+
+        elif self.current_tok.type == TT_VAR and self.peek().type == TT_ASSIGN:
             # This is an assignment
             return self.expr()
 
-        # Otherwise, check if it's an invalid standalone number or string
         elif self.current_tok.type in (TT_INT, TT_FLOAT, TT_STRING):
             return res.failure(InvalidSyntaxError(
                 self.current_tok.pos_start, self.current_tok.pos_end,
                 "Expected variable assignment, not standalone value"
             ))
 
-        # Handle other types of statements or expressions
         return self.expr()
+    
+    def if_expr(self):
+        res = ParseResult()
+        cases = []
+        else_case = None
+
+        if self.current_tok.matches(TT_KEYWORD, 'IF'):
+            res.register(self.advance())
+
+            condition = res.register(self.expr())
+            if res.error: 
+                return res
+            
+            if not self.current_tok.type == TT_COLON:
+                print(f"Error: Expected ':', but got {self.current_tok}")
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected ':'"
+                ))
+
+            res.register(self.advance())
+            if self.current_tok.type != TT_NEWLINE:
+                print(f"Error: Expected 'NEWLINE', but got {self.current_tok}")
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected 'NEWLINE'"
+                ))
+
+            res.register(self.advance())
+
+            body = res.register(self.expr())  
+            if res.error: 
+                return res
+            cases.append((condition, body)) 
+            res.register(self.advance())          
+
+        while self.current_tok.matches(TT_KEYWORD, 'ELIF'):
+            res.register(self.advance())
+
+            condition = res.register(self.expr())
+            if res.error: return res
+
+            if not self.current_tok.type == TT_COLON:
+                print(f"Error: Expected ':', but got {self.current_tok}")
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected ':'"
+                ))
+
+            res.register(self.advance())
+
+            if self.current_tok.type != TT_NEWLINE:
+                print(f"Error: Expected 'NEWLINE', but got {self.current_tok}")
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected 'NEWLINE'"
+                ))
+
+            res.register(self.advance())
+            body = res.register(self.expr())
+            if res.error: 
+                return res
+            cases.append((condition, body))
+            res.register(self.advance())
+
+        if self.current_tok.matches(TT_KEYWORD, 'ELSE'):
+            res.register(self.advance())
+
+            if not self.current_tok.type == TT_COLON:
+                print(f"Error: Expected ':', but got {self.current_tok}")
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected ':' "
+                ))
+
+            res.register(self.advance())
+
+            if self.current_tok.type != TT_NEWLINE:
+                print(f"Error: Expected 'NEWLINE', but got {self.current_tok}")
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected 'NEWLINE' "
+                ))
+
+            res.register(self.advance())
+
+            else_case = res.register(self.expr())         
+            cases.append((None, else_case))           
+            if res.error: 
+                return res
+
+        return res.success(IfNode(cases, else_case))
 
     def factor(self):
         res = ParseResult()
@@ -736,7 +868,10 @@ class RTResult:
     def failure(self, error):
         self.error = error
         return self
-
+    
+    def should_return(self):
+        return self.error is not None
+    
 #################################
 # VALUES
 #################################
@@ -855,6 +990,9 @@ class CompOp:
 
     def __str__(self):
         return str(self.value)
+    
+    def __bool__(self):
+        return bool(self.value)
 
 class LogicalOp:
     def __init__(self, value):
@@ -883,14 +1021,14 @@ class LogicalOp:
             return LogicalOp(self.value or bool(other.value)).set_context(self.context), None
 
     def __str__(self):
-        return str(self.value)  # Convert back to int for display
+        return str(self.value)  
     
 class Variable:
     def __init__(self, value=None):
         self.set_pos()
         self.set_context()
         self.value = value
-        self.variables = {}  # Dictionary to store variables by name
+        self.variables = {}  
 
     def set_pos(self, pos_start=None, pos_end=None):
         self.pos_start = pos_start
@@ -903,15 +1041,12 @@ class Variable:
 
     def assign_to(self, name, other):
         if isinstance(other, Number):
-            # Assign the value of 'other' to the var_name name
             self.variables[name] = Number(other.value).set_context(self.context)
             return self.variables[name], None
         else:
-            # Handle other types or raise an error
             return None, ValueError("Assignment only supports Numbers.")
 
     def get_value(self, name):
-        # Retrieve the value of a var_name by name
         return self.variables.get(name, None)
     
 #################################
@@ -923,7 +1058,7 @@ class Context:
         self.display_name = display_name
         self.parent = parent
         self.parent_entry_pos = parent_entry_pos
-        self.variables = {}  # Dictionary to store variables
+        self.variables = {}  
 
 #################################
 # INTERPRETER
@@ -931,7 +1066,7 @@ class Context:
     
 class Interpreter:
     def visit(self, node, context):
-        method_name = f'visit_{type(node).__name__}' # Creates visit_BinOpNode or visit_NumberNode
+        method_name = f'visit_{type(node).__name__}' 
         method = getattr(self, method_name, self.no_visit_method)
         return method(node, context)
     
@@ -955,7 +1090,7 @@ class Interpreter:
         if res.error:
             return res
 
-        error = None  # Initialize error to None
+        error = None  
 
         # Handle numbers
         if isinstance(left, Number) and isinstance(right, Number):
@@ -972,7 +1107,7 @@ class Interpreter:
 
         # Handle strings
         elif isinstance(left, Strings) and isinstance(right, Strings):
-            if node.op_tok.type == TT_PLUS:  # Assuming + is used for string concatenation
+            if node.op_tok.type == TT_PLUS:  
                 result = left.concat(right)
                 if result is None:
                     error = ValueError(f"Cannot concatenate {left} and {right}")
@@ -1146,6 +1281,46 @@ class Interpreter:
                     f"'{variable_name}' is not defined",
                     context
                 ))
+            
+    def visit_IfNode(self, node, context):
+        res = RTResult()
+        
+        # Process each condition
+        for condition, body in node.cases:
+            if condition is None:
+                # Directly process the body if the condition is None
+                body_result = self.visit(body, context)
+                if body_result.error:
+                    return res.failure(body_result.error)
+                if res.should_return():
+                    return res
+                return res.success(body_result.value)
+            
+            # Process the condition
+            condition_result = self.visit(condition, context)
+            if condition_result.error:
+                return res.failure(condition_result.error)
+
+            condition_result_value = condition_result.value
+
+            if condition_result_value:
+                body_result = self.visit(body, context)
+                if body_result.error:
+                    return res.failure(body_result.error)
+                if res.should_return():
+                    return res
+                return res.success(body_result.value)
+
+        # Handle the else case if present
+        if node.else_case:
+            else_result = self.visit(node.else_case, context)
+            if else_result.error:
+                return res.failure(else_result.error)
+            if res.should_return():
+                return res
+            return res.success(else_result.value)
+
+        return res
 
 #################################
 # RUN
