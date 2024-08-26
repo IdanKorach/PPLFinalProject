@@ -91,7 +91,7 @@ class Position:
 #################################
     
 SAVED_WORDS = {
-    'IF', 'ELSE', 'WHILE', 'ELIF'
+    'IF', 'ELIF', 'ELSE', 'WHILE', 'ENDWHILE'
 }
 
 TT_INT      = 'INT'
@@ -487,6 +487,16 @@ class IfNode:
 
     def __repr__(self):
         return f'IfNode({self.cases}, {self.else_case})'
+    
+class WhileNode:
+    def __init__(self, condition, body, pos_start, pos_end):
+        self.condition = condition
+        self.body = body
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+
+    def __repr__(self):
+        return f'(WHILE {self.condition} DO {self.body})'
 
 #################################
 # PARSER RESULT
@@ -566,7 +576,13 @@ class Parser:
     def statement(self):
         res = ParseResult()
 
-        if self.current_tok.matches(TT_KEYWORD, 'IF'):
+        if self.current_tok.matches(TT_KEYWORD, 'WHILE'):
+            while_loop = res.register(self.while_expr())
+            if res.error:
+                return res
+            return res.success(while_loop)
+
+        elif self.current_tok.matches(TT_KEYWORD, 'IF'):
             if_stmt = res.register(self.if_expr())
             if res.error:
                 return res
@@ -595,6 +611,57 @@ class Parser:
             ))
 
         return self.expr()
+    
+    def while_expr(self):
+        res = ParseResult()
+        pos_start = self.current_tok.pos_start.copy()
+
+        res.register(self.advance()) 
+        condition = res.register(self.expr())
+        if res.error: 
+            return res
+        
+        if not self.current_tok.type == TT_COLON:
+            print(f"Error: Expected ':', but got {self.current_tok}")
+            return res.failure(InvalidSyntaxError(
+                self.current_tok.pos_start, self.current_tok.pos_end,
+                "Expected ':'"
+            ))
+        
+        res.register(self.advance())
+        if self.current_tok.type != TT_NEWLINE:
+            print(f"Error: Expected 'NEWLINE', but got {self.current_tok}")
+            return res.failure(InvalidSyntaxError(
+                self.current_tok.pos_start, self.current_tok.pos_end,
+                "Expected 'NEWLINE'"
+            ))
+
+        res.register(self.advance())
+
+        loop_body = []
+        while not self.current_tok.matches(TT_KEYWORD, 'ENDWHILE'):
+            stmt = res.register(self.statement())
+            if res.error: 
+                    return res
+            loop_body.append(stmt)
+
+            # res.register(self.advance()) maybe we need this
+            if self.current_tok.type != TT_NEWLINE:
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected 'NEWLINE'"
+                ))
+
+            res.register(self.advance())
+        
+        if not self.current_tok.matches(TT_KEYWORD, 'ENDWHILE'):
+            return res.failure(InvalidSyntaxError(
+                self.current_tok.pos_start, self.current_tok.pos_end,
+                "Expected 'ENDWHILE' "
+            ))
+        res.register(self.advance())
+        pos_end = self.current_tok.pos_end.copy()
+        return res.success(WhileNode(condition, loop_body, pos_start, pos_end))
     
     def if_expr(self):
         res = ParseResult()
@@ -891,6 +958,12 @@ class Number:
         self.context = context
         return self
 
+    def copy(self):
+        copy = Number(self.value)
+        copy.set_pos(self.pos_start, self.pos_end)
+        copy.set_context(self.context)
+        return copy
+
     def added_to(self, other):
         if isinstance(other, Number):
             return Number(self.value + other.value).set_context(self.context), None
@@ -937,6 +1010,12 @@ class Strings:
     def set_context(self, context=None):
         self.context = context
         return self
+    
+    def copy(self):
+        copy = Strings(self.value)
+        copy.set_pos(self.pos_start, self.pos_end)
+        copy.set_context(self.context)
+        return copy
     
     def concat(self, other):
         if isinstance(other, Strings):
@@ -1272,9 +1351,13 @@ class Interpreter:
             context.variables[variable_name] = value
             return res.success(value)
         else:
-            # Variable usage
+            # Variable access
             if variable_name in context.variables:
-                return res.success(context.variables[variable_name])
+                value = context.variables[variable_name]
+                # If the value is a Number or Strings, return a copy
+                if isinstance(value, (Number, Strings)):
+                    return res.success(value.copy().set_pos(node.pos_start, node.pos_end))
+                return res.success(value)
             else:
                 return res.failure(RTError(
                     node.pos_start, node.pos_end,
@@ -1321,6 +1404,27 @@ class Interpreter:
             return res.success(else_result.value)
 
         return res
+
+    def visit_WhileNode(self, node, context):
+        res = RTResult()
+        
+        while True:
+            condition = res.register(self.visit(node.condition, context))
+            if res.should_return(): return res
+            
+            if isinstance(condition, tuple) and len(condition) == 2:
+                condition = condition[0]
+            
+            if not bool(condition):
+                break
+
+            for statement in node.body:
+                res.register(self.visit(statement, context))
+                if res.should_return(): return res
+
+        # Return the final value of x
+        x_value = context.variables.get('x')
+        return res.success(x_value)
 
 #################################
 # RUN
