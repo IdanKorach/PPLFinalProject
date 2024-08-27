@@ -91,7 +91,7 @@ class Position:
 #################################
     
 SAVED_WORDS = {
-    'IF', 'ELIF', 'ELSE', 'WHILE', 'ENDWHILE'
+    'IF', 'ELIF', 'ELSE', 'WHILE', 'ENDWHILE', 'P'
 }
 
 TT_INT      = 'INT'
@@ -449,9 +449,9 @@ class CompOpNode:
     
 class StatementsNode:
     def __init__(self, statements):
-        self.statements = statements
-        self.pos_start = statements[0].pos_start if len(statements) > 0 else None
-        self.pos_end = statements[-1].pos_end if len(statements) > 0 else None
+        self.statements = [stmt for stmt in statements if not isinstance(stmt, EmptyNode)]
+        self.pos_start = self.statements[0].pos_start if self.statements else None
+        self.pos_end = self.statements[-1].pos_end if self.statements else None
 
     def __repr__(self):
         return f"{self.statements}"
@@ -497,6 +497,23 @@ class WhileNode:
 
     def __repr__(self):
         return f'(WHILE {self.condition} DO {self.body})'
+
+class PrintNode:
+    def __init__(self, node_to_print, pos_start, pos_end):
+        self.node_to_print = node_to_print
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+
+    def __repr__(self):
+        return f'(PRINT {self.node_to_print})'
+    
+class EmptyNode:
+    def __init__(self, pos_start, pos_end):
+        self.pos_start = pos_start
+        self.pos_end = pos_end
+
+    def __repr__(self):
+        return 'EmptyNode()'
 
 #################################
 # PARSER RESULT
@@ -558,25 +575,53 @@ class Parser:
         statements = []
 
         while self.current_tok.type != TT_EOF:
-            stmt = res.register(self.statement())
-            if res.error:
-                return res
-            statements.append(stmt)
-
             if self.current_tok.type == TT_NEWLINE:
-                res.register(self.advance())  # Advance past the newline
-            elif self.current_tok.type != TT_EOF:
-                return res.failure(InvalidSyntaxError(
-                    self.current_tok.pos_start, self.current_tok.pos_end,
-                    "Expected 'NEWLINE'"
-                ))
+                res.register(self.advance())
+            else:
+                statement = res.register(self.statement())
+                if res.error:
+                    return res
+                statements.append(statement)
 
         return res.success(StatementsNode(statements))
 
     def statement(self):
         res = ParseResult()
 
-        if self.current_tok.matches(TT_KEYWORD, 'WHILE'):
+        if self.current_tok.type == TT_NEWLINE:
+            pos_start = self.current_tok.pos_start.copy()
+            pos_end = self.current_tok.pos_end.copy()
+            res.register(self.advance())
+            return res.success(EmptyNode(pos_start, pos_end))
+
+        elif self.current_tok.matches(TT_KEYWORD, 'P'):
+            pos_start = self.current_tok.pos_start
+            res.register(self.advance())
+            
+            if self.current_tok.type != TT_LPAREN:
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected '('"
+                ))
+            
+            res.register(self.advance())
+            
+            expr = res.register(self.expr())
+            if res.error:
+                return res
+            
+            if self.current_tok.type != TT_RPAREN:
+                return res.failure(InvalidSyntaxError(
+                    self.current_tok.pos_start, self.current_tok.pos_end,
+                    "Expected ')'"
+                ))
+            
+            pos_end = self.current_tok.pos_end
+            res.register(self.advance())
+            
+            return res.success(PrintNode(expr, pos_start, pos_end))
+
+        elif self.current_tok.matches(TT_KEYWORD, 'WHILE'):
             while_loop = res.register(self.while_expr())
             if res.error:
                 return res
@@ -692,7 +737,7 @@ class Parser:
 
             res.register(self.advance())
 
-            body = res.register(self.expr())  
+            body = res.register(self.statement())  
             if res.error: 
                 return res
             cases.append((condition, body)) 
@@ -702,7 +747,8 @@ class Parser:
             res.register(self.advance())
 
             condition = res.register(self.expr())
-            if res.error: return res
+            if res.error: 
+                return res
 
             if not self.current_tok.type == TT_COLON:
                 print(f"Error: Expected ':', but got {self.current_tok}")
@@ -721,7 +767,7 @@ class Parser:
                 ))
 
             res.register(self.advance())
-            body = res.register(self.expr())
+            body = res.register(self.statement())
             if res.error: 
                 return res
             cases.append((condition, body))
@@ -748,10 +794,10 @@ class Parser:
 
             res.register(self.advance())
 
-            else_case = res.register(self.expr())         
-            cases.append((None, else_case))           
+            else_case = res.register(self.statement())       
             if res.error: 
-                return res
+                return res  
+            cases.append((None, else_case))           
 
         return res.success(IfNode(cases, else_case))
 
@@ -1367,50 +1413,39 @@ class Interpreter:
             
     def visit_IfNode(self, node, context):
         res = RTResult()
-        
-        # Process each condition
-        for condition, body in node.cases:
+        executed = False
+
+        for i, (condition, body) in enumerate(node.cases):
+            if executed:
+                break  
+
             if condition is None:
-                # Directly process the body if the condition is None
                 body_result = self.visit(body, context)
                 if body_result.error:
                     return res.failure(body_result.error)
-                if res.should_return():
-                    return res
+                executed = True
                 return res.success(body_result.value)
-            
-            # Process the condition
+
             condition_result = self.visit(condition, context)
             if condition_result.error:
                 return res.failure(condition_result.error)
 
-            condition_result_value = condition_result.value
-
-            if condition_result_value:
+            if condition_result.value:
                 body_result = self.visit(body, context)
                 if body_result.error:
                     return res.failure(body_result.error)
-                if res.should_return():
-                    return res
+                executed = True
                 return res.success(body_result.value)
 
-        # Handle the else case if present
-        if node.else_case:
-            else_result = self.visit(node.else_case, context)
-            if else_result.error:
-                return res.failure(else_result.error)
-            if res.should_return():
-                return res
-            return res.success(else_result.value)
-
-        return res
+        return res.success(None)
 
     def visit_WhileNode(self, node, context):
         res = RTResult()
         
         while True:
             condition = res.register(self.visit(node.condition, context))
-            if res.should_return(): return res
+            if res.should_return(): 
+                return res
             
             if isinstance(condition, tuple) and len(condition) == 2:
                 condition = condition[0]
@@ -1420,11 +1455,20 @@ class Interpreter:
 
             for statement in node.body:
                 res.register(self.visit(statement, context))
-                if res.should_return(): return res
+                if res.should_return(): 
+                    return res
 
         # Return the final value of x
         x_value = context.variables.get('x')
         return res.success(x_value)
+    
+    def visit_PrintNode(self, node, context):
+        res = RTResult()
+        value = res.register(self.visit(node.node_to_print, context))
+        if res.error:
+            return res
+        print(value)
+        return res.success(None)
 
 #################################
 # RUN
@@ -1453,8 +1497,8 @@ def run(filename, text):
         return None, result.error
     
     # Print the result of each statement for debugging
-    for statement_result in result.value:
-        if statement_result is not None:
-            print(statement_result)
+    # for statement_result in result.value:
+        # if statement_result is not None:
+        #     print(statement_result)
     
     return result.value, None
