@@ -245,6 +245,7 @@ TT_PLUS     = 'PLUS'     # Addition operator
 TT_MINUS    = 'MINUS'    # Subtraction operator
 TT_MUL      = 'MUL'      # Multiplication operator
 TT_DIV      = 'DIV'      # Division operator
+TT_MODULO   = 'MOD'
 TT_POWER    = 'POW'      # Exponentiation operator
 
 # Token types for parentheses and end of file
@@ -431,6 +432,10 @@ class Lexer:
 
             elif self.current_char == '/':
                 tokens.append(Token(TT_DIV, pos_start=self.pos))
+                self.advance()
+
+            elif self.current_char == '%':
+                tokens.append(Token(TT_MODULO, pos_start=self.pos))
                 self.advance()
 
             elif self.current_char == '(':
@@ -1179,7 +1184,6 @@ class Parser:
                     return res
             loop_body.append(stmt)
 
-            # res.register(self.advance()) maybe we need this
             if self.current_tok.type != TT_NEWLINE:
                 return res.failure(InvalidSyntaxError(
                     self.current_tok.pos_start, self.current_tok.pos_end,
@@ -1424,7 +1428,7 @@ class Parser:
         Returns:
             ParseResult: The result of parsing the term, including the constructed node or an error.
         """
-        return self.bin_op(self.factor, (TT_MUL, TT_DIV, TT_POWER))
+        return self.bin_op(self.factor, (TT_MUL, TT_DIV, TT_MODULO, TT_POWER))
     
     def logic_expr(self):
         """
@@ -1779,6 +1783,26 @@ class Number:
                 )
             
             return Number(self.value / other.value).set_context(self.context), None
+    
+    def modulo(self, other):
+        """
+        Performs the modulo operation of the current number with another `Number` instance.
+
+        Args:
+            other (Number): The `Number` instance to perform the modulo operation with.
+
+        Returns:
+            tuple: A tuple (result, error). The result is a new `Number` instance with the remainder, or None and an `RTError` if there's an error.
+        """
+        if isinstance(other, Number):
+            if other.value == 0:
+                return None, RTError(
+                    other.pos_start, other.pos_end,
+                    "Modulo by zero is undefined\n",
+                    self.context
+                )
+            
+            return Number(self.value % other.value).set_context(self.context), None
         
     def __str__(self):
         """
@@ -2491,6 +2515,8 @@ class Interpreter:
                 result, error = left.multed_by(right)
             elif node.op_tok.type == TT_DIV:
                 result, error = left.dived_by(right)
+            elif node.op_tok.type == TT_MODULO:
+                result, error = left.modulo(right)
             elif node.op_tok.type == TT_POWER:
                 result, error = left.powed_by(right)
 
@@ -2851,7 +2877,6 @@ def run(filename, text):
     # Generate tokens
     lexer = Lexer(filename, text)
     tokens, error = lexer.make_tokens()
-    # print(tokens)
     if error: 
         return None, error
     
@@ -2868,10 +2893,5 @@ def run(filename, text):
     
     if result.error:
         return None, result.error
-    
-    # Print the result of each statement for debugging
-    # for statement_result in result.value:
-        # if statement_result is not None:
-        #     print(statement_result)
     
     return result.value, None

@@ -1,8 +1,59 @@
-expr         : term ((PLUS|MINUS) term)*
+# Grammar Rules
 
-term         : factor ((MUL|DIV) factor)*
+program      : statement*
 
-factor       : INT|FLOAT
-             : (PLUS|MINUS) factor
-             : LPAREN expr RPAREN
-             : Min(expr, expr)
+statement    : var_assign
+             | expr
+             | print_stmt
+             | if_stmt
+             | while_stmt
+             | NEWLINE
+
+var_assign   : IDENTIFIER ASSIGN expr
+
+expr         : term ((PLUS | MINUS) term)*
+
+term         : factor ((MUL | DIV) factor)*
+
+factor       : base ((EXP) base)*
+
+base         : INT
+             | FLOAT
+             | IDENTIFIER
+             | LPAREN expr RPAREN
+             | function_call
+             | (PLUS | MINUS) base
+             
+function_call: MIN LPAREN expr COMMA expr RPAREN
+             | MAX LPAREN expr COMMA expr RPAREN
+
+print_stmt   : PRINT LPAREN expr RPAREN
+
+if_stmt      : IF expr COLON statement* (ELIF expr COLON statement*)* (ELSE COLON statement*)?
+             | NEWLINE
+
+while_stmt   : WHILE expr COLON statement* ENDWHILE
+
+# Tokens
+PRINT        : "P"
+IF           : "IF"
+ELIF         : "ELIF"
+ELSE         : "ELSE"
+WHILE        : "WHILE"
+ENDWHILE     : "ENDWHILE"
+IDENTIFIER   : /[a-zA-Z_][a-zA-Z0-9_]*/
+INT          : /\d+/
+FLOAT        : /\d+\.\d+/
+PLUS         : "+"
+MINUS        : "-"
+MUL          : "*"
+DIV          : "/"
+EXP          : "^"
+LPAREN       : "("
+RPAREN       : ")"
+ASSIGN       : "="
+COLON        : ":"
+NEWLINE      : /[\r\n]+/
+MIN          : "Min"
+MAX          : "Max"
+COMMA        : ","

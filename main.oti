@@ -1,1 +1,66 @@
-x = 10
+x = 7
+y = 12
+z = 3
+
+P("Basic arithmetic:")
+P(x + y * z)
+P((x + y) * z)
+P(y / x + z)
+P(x ^ z - y)
+
+P(" ")
+
+P("Comparison and logical operations:")
+P((x < y) & (z > x) || (y == 12))
+P(!(x >= z) || (y <= x + 5))
+P((x + z > y) & (y - x < z * 2))
+
+P(" ")
+
+P("Complex combinations:")
+result1 = (x * y + z) / (x + y - z)
+P(result1)
+result2 = Min(Max(x, y), z ^ 2) + (x * y / z)
+P(result2)
+
+P(" ")
+
+P("Control structures:")
+IF x + y > z * 5:
+    P("x + y is greater than z * 5")
+    IF x ^ 2 < y:
+        P("x squared is less than y")
+ELIF x * z < y:
+    P("x * z is less than y")
+    IF y / x > z:
+        P("y divided by x is greater than z")
+ELIF x + y + z == 22:
+    P("Sum of x, y, and z is 22")
+ELSE:
+    P("None of the conditions were met")
+
+P(" ")
+
+P("Nested while loops")
+i = 1
+WHILE i <= 3:
+    j = 1
+    WHILE j <= i:
+        P("i and j:")
+        P(i)
+        P(j)
+        j = j + 1
+    ENDWHILE
+    i = i + 1
+ENDWHILE
+
+P(" ")
+
+P("Final complex expression")
+final_result = ((x + y) * z - (x * y / z)) ^ (Min(x, Max(y, z)))
+P("Final complex expression result:")
+P(final_result)
+
+P(" ")
+
+P("Program completed")
